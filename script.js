@@ -1,0 +1,219 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158/build/three.module.js';
+
+let scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202020);
+
+// ===== CAMERA =====
+let camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+);
+
+// ===== RENDER =====
+let renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ===== LUZ =====
+let light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+scene.add(light);
+
+// ===== CHÃO =====
+let floorGeo = new THREE.PlaneGeometry(50, 50);
+let floorMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
+let floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+
+// ===== PLAYER =====
+let playerGeo = new THREE.BoxGeometry(1, 2, 1);
+let playerMat = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+let player = new THREE.Mesh(playerGeo, playerMat);
+player.position.y = 1;
+player.visible = false;
+scene.add(player);
+
+// ================= VIDA =================
+
+let life = 100;
+
+let oldBar = document.getElementById("lifeBar");
+if (oldBar) oldBar.remove();
+
+let lifeBar = document.createElement("div");
+lifeBar.id = "lifeBar";
+lifeBar.style.position = "absolute";
+lifeBar.style.top = "20px";
+lifeBar.style.left = "20px";
+lifeBar.style.width = "200px";
+lifeBar.style.height = "20px";
+lifeBar.style.border = "2px solid white";
+document.body.appendChild(lifeBar);
+
+let lifeFill = document.createElement("div");
+lifeFill.style.height = "100%";
+lifeFill.style.width = "100%";
+lifeFill.style.background = "red";
+lifeBar.appendChild(lifeFill);
+
+// ================= CONTROLES =================
+
+let keys = {};
+
+document.addEventListener("keydown", e => keys[e.code] = true);
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+// ===== MOUSE FPS =====
+
+let yaw = 0;
+let pitch = 0;
+let sensitivity = 0.002;
+
+document.body.addEventListener("click", () => {
+    document.body.requestPointerLock();
+});
+
+document.addEventListener("mousemove", (event) => {
+
+    if (document.pointerLockElement === document.body) {
+
+        yaw -= event.movementX * sensitivity;
+        pitch -= event.movementY * sensitivity;
+
+        pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
+    }
+});
+
+// ================= PAREDES =================
+
+let walls = [];
+
+function createWall(x, z, w, h) {
+
+    let geo = new THREE.BoxGeometry(w, 3, h);
+    let mat = new THREE.MeshStandardMaterial({ color: 0x8888ff });
+    let wall = new THREE.Mesh(geo, mat);
+
+    wall.position.set(x, 1.5, z);
+    scene.add(wall);
+
+    wall.userData.box = new THREE.Box3().setFromObject(wall);
+    walls.push(wall);
+}
+
+createWall(5, 0, 1, 10);
+createWall(-5, 0, 1, 10);
+createWall(0, 5, 10, 1);
+createWall(0, -5, 10, 1);
+
+// ================= FISICA PULO =================
+let velocityY = 0;
+let gravity = -0.008;   // queda mais lenta (mais tempo no ar)
+let jumpForce = 0.14;   // altura menor
+let onGround = true;
+let canJump = true;     // controla segurar espaço
+
+// ================= COLISÃO =================
+
+function checkCollision(nextPosition) {
+
+    let playerBox = new THREE.Box3().setFromCenterAndSize(
+        nextPosition,
+        new THREE.Vector3(1, 2, 1)
+    );
+
+    for (let wall of walls) {
+        if (playerBox.intersectsBox(wall.userData.box)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ================= LOOP =================
+
+function animate() {
+
+    requestAnimationFrame(animate);
+
+    // ===== DIREÇÕES FPS CORRETAS =====
+
+    let forward = new THREE.Vector3(
+        -Math.sin(yaw),
+        0,
+        -Math.cos(yaw)
+    );
+
+    let right = new THREE.Vector3(
+        Math.cos(yaw),
+        0,
+        -Math.sin(yaw)
+    );
+
+    let moveSpeed = 0.1;
+    let nextPosition = player.position.clone();
+
+    if (keys["KeyW"]) nextPosition.add(forward.clone().multiplyScalar(moveSpeed));
+    if (keys["KeyS"]) nextPosition.add(forward.clone().multiplyScalar(-moveSpeed));
+    if (keys["KeyA"]) nextPosition.add(right.clone().multiplyScalar(-moveSpeed));
+    if (keys["KeyD"]) nextPosition.add(right.clone().multiplyScalar(moveSpeed));
+
+    // colisão X
+    if (!checkCollision(new THREE.Vector3(
+        nextPosition.x,
+        player.position.y,
+        player.position.z
+    ))) {
+        player.position.x = nextPosition.x;
+    }
+
+    // colisão Z
+    if (!checkCollision(new THREE.Vector3(
+        player.position.x,
+        player.position.y,
+        nextPosition.z
+    ))) {
+        player.position.z = nextPosition.z;
+    }
+
+    // ===== PULO =====
+
+   // pulo apenas quando tecla é pressionada (não segurando)
+
+    if (keys["Space"] && onGround && canJump) {
+    velocityY = jumpForce;
+    onGround = false;
+    canJump = false;
+}
+
+// quando soltar espaço pode pular novamente
+    if (!keys["Space"]) {
+    canJump = true;
+}
+
+    velocityY += gravity;
+    player.position.y += velocityY;
+
+    if (player.position.y <= 1) {
+        player.position.y = 1;
+        velocityY = 0;
+        onGround = true;
+    }
+
+    // ===== CAMERA PRIMEIRA PESSOA =====
+
+    camera.position.x = player.position.x;
+    camera.position.y = player.position.y + 0.6;
+    camera.position.z = player.position.z;
+
+    camera.rotation.order = "YXZ";
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+
+    renderer.render(scene, camera);
+}
+
+animate();
