@@ -31,7 +31,7 @@ scene.add(floor);
 let playerGeo = new THREE.BoxGeometry(1, 2, 1);
 let playerMat = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
 let player = new THREE.Mesh(playerGeo, playerMat);
-player.position.y = 1;
+player.position.set(0, 1, 0);
 player.visible = false;
 scene.add(player);
 
@@ -39,29 +39,56 @@ scene.add(player);
 
 let life = 100;
 
-let oldBar = document.getElementById("lifeBar");
-if (oldBar) oldBar.remove();
+let lifeBar = document.getElementById("lifeBar");
 
-let lifeBar = document.createElement("div");
-lifeBar.id = "lifeBar";
-lifeBar.style.position = "absolute";
-lifeBar.style.top = "20px";
-lifeBar.style.left = "20px";
-lifeBar.style.width = "200px";
-lifeBar.style.height = "20px";
-lifeBar.style.border = "2px solid white";
-document.body.appendChild(lifeBar);
+if (!lifeBar) {
 
-let lifeFill = document.createElement("div");
-lifeFill.style.height = "100%";
-lifeFill.style.width = "100%";
-lifeFill.style.background = "red";
-lifeBar.appendChild(lifeFill);
+    lifeBar = document.createElement("div");
+    lifeBar.id = "lifeBar";
+
+    lifeBar.style.position = "absolute";
+    lifeBar.style.top = "20px";
+    lifeBar.style.left = "20px";
+    lifeBar.style.width = "200px";
+    lifeBar.style.height = "20px";
+    lifeBar.style.border = "2px solid white";
+    lifeBar.style.background = "#222";
+
+    document.body.appendChild(lifeBar);
+
+    let lifeFill = document.createElement("div");
+    lifeFill.id = "lifeFill";
+    lifeFill.style.height = "100%";
+    lifeFill.style.width = "100%";
+    lifeFill.style.background = "red";
+
+    lifeBar.appendChild(lifeFill);
+}
+
+let lifeFill = document.getElementById("lifeFill");
+
+// ===== RESPAWN =====
+
+function respawnPlayer() {
+
+    life = 100;
+    lifeFill.style.width = "100%";
+
+    player.position.set(0, 1, 0);
+
+    velocity.set(0, 0, 0);
+    velocityY = 0;
+
+    onGround = true;
+    canJump = true;
+
+    jumpCounter = 0;
+    nextDamageJump = getRandomJumpLimit();
+}
 
 // ================= CONTROLES =================
 
 let keys = {};
-
 document.addEventListener("keydown", e => keys[e.code] = true);
 document.addEventListener("keyup", e => keys[e.code] = false);
 
@@ -108,12 +135,34 @@ createWall(-5, 0, 1, 10);
 createWall(0, 5, 10, 1);
 createWall(0, -5, 10, 1);
 
-// ================= FISICA PULO =================
+// ================= MOVIMENTO =================
+
+let velocity = new THREE.Vector3();
+let acceleration = 0.004;
+let friction = 0.85;
+let maxSpeed = 0.045;
+
+// ================= PULO =================
+
 let velocityY = 0;
-let gravity = -0.008;   // queda mais lenta (mais tempo no ar)
-let jumpForce = 0.14;   // altura menor
+
+let gravityUp = -0.0022;
+let gravityDown = -0.001;
+
+let jumpForce = 0.095;
+
 let onGround = true;
-let canJump = true;     // controla segurar espaço
+let canJump = true;
+
+// ===== MECÂNICA DANO POR PULO =====
+
+let jumpCounter = 0;
+
+function getRandomJumpLimit() {
+    return Math.floor(Math.random() * 5) + 1; // 1 a 5
+}
+
+let nextDamageJump = getRandomJumpLimit();
 
 // ================= COLISÃO =================
 
@@ -139,7 +188,7 @@ function animate() {
 
     requestAnimationFrame(animate);
 
-    // ===== DIREÇÕES FPS CORRETAS =====
+    // ===== DIREÇÃO =====
 
     let forward = new THREE.Vector3(
         -Math.sin(yaw),
@@ -153,15 +202,26 @@ function animate() {
         -Math.sin(yaw)
     );
 
-    let moveSpeed = 0.1;
-    let nextPosition = player.position.clone();
+    let moveDirection = new THREE.Vector3();
 
-    if (keys["KeyW"]) nextPosition.add(forward.clone().multiplyScalar(moveSpeed));
-    if (keys["KeyS"]) nextPosition.add(forward.clone().multiplyScalar(-moveSpeed));
-    if (keys["KeyA"]) nextPosition.add(right.clone().multiplyScalar(-moveSpeed));
-    if (keys["KeyD"]) nextPosition.add(right.clone().multiplyScalar(moveSpeed));
+    if (keys["KeyW"]) moveDirection.add(forward);
+    if (keys["KeyS"]) moveDirection.add(forward.clone().negate());
+    if (keys["KeyA"]) moveDirection.add(right.clone().negate());
+    if (keys["KeyD"]) moveDirection.add(right);
 
-    // colisão X
+    if (moveDirection.length() > 0) {
+        moveDirection.normalize();
+        velocity.add(moveDirection.multiplyScalar(acceleration));
+    }
+
+    if (velocity.length() > maxSpeed) {
+        velocity.normalize().multiplyScalar(maxSpeed);
+    }
+
+    velocity.multiplyScalar(friction);
+
+    let nextPosition = player.position.clone().add(velocity);
+
     if (!checkCollision(new THREE.Vector3(
         nextPosition.x,
         player.position.y,
@@ -170,7 +230,6 @@ function animate() {
         player.position.x = nextPosition.x;
     }
 
-    // colisão Z
     if (!checkCollision(new THREE.Vector3(
         player.position.x,
         player.position.y,
@@ -181,20 +240,32 @@ function animate() {
 
     // ===== PULO =====
 
-   // pulo apenas quando tecla é pressionada (não segurando)
-
     if (keys["Space"] && onGround && canJump) {
-    velocityY = jumpForce;
-    onGround = false;
-    canJump = false;
-}
 
-// quando soltar espaço pode pular novamente
-    if (!keys["Space"]) {
-    canJump = true;
-}
+        velocityY = jumpForce;
+        onGround = false;
+        canJump = false;
 
-    velocityY += gravity;
+        // CONTADOR DE PULOS
+        jumpCounter++;
+
+        if (jumpCounter >= nextDamageJump) {
+
+            life -= 10;
+            if (life < 0) life = 0;
+
+            lifeFill.style.width = life + "%";
+
+            jumpCounter = 0;
+            nextDamageJump = getRandomJumpLimit();
+        }
+    }
+
+    if (!keys["Space"]) canJump = true;
+
+    if (velocityY > 0) velocityY += gravityUp;
+    else velocityY += gravityDown;
+
     player.position.y += velocityY;
 
     if (player.position.y <= 1) {
@@ -203,7 +274,13 @@ function animate() {
         onGround = true;
     }
 
-    // ===== CAMERA PRIMEIRA PESSOA =====
+    // ===== MORTE =====
+
+    if (life <= 0) {
+        respawnPlayer();
+    }
+
+    // ===== CAMERA FPS =====
 
     camera.position.x = player.position.x;
     camera.position.y = player.position.y + 0.6;
